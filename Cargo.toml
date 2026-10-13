@@ -1,0 +1,28 @@
+[package]
+name = "giddy-ganja"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "A fast, tile-based maze-chase game: gather every leaf, dodge the cops, reach the gate."
+license = "MIT"
+repository = "https://github.com/s3pp3ku/giddy-ganja"
+readme = "README.md"
+keywords = ["game", "maze", "arcade", "macroquad"]
+categories = ["games"]
+
+[lib]
+name = "giddy_ganja"
+path = "src/lib.rs"
+
+[[bin]]
+name = "giddy-ganja"
+path = "src/main.rs"
+
+[dependencies]
+macroquad = { version = "0.4", default-features = false, features = ["audio"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
