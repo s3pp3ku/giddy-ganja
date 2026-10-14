@@ -1084,7 +1084,13 @@ async fn main() {
             };
         }
 
+        // The rave plays in game; lighting up drops into dubstep until the smoke clears.
+        let smoked = app
+            .play
+            .as_ref()
+            .is_some_and(|p| p.world.smoked_out().is_some());
         app.music.set(Some(match app.screen {
+            Screen::Play | Screen::Paused if smoked => Tune::Power,
             Screen::Play | Screen::Paused => Tune::Game,
             _ => Tune::Menu,
         }));

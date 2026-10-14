@@ -75,8 +75,10 @@ Flags: `--demo [level]` (watch the autopilot), `--level N`,
 
 `cargo test` runs the headless logic suite: movement, cop AI (never idle, no
 U-turns), level validity and no dead ends, and an autopilot that clears levels.
-All art is drawn from shapes at runtime and all sound, including the reggae music
-loops, is synthesized at startup; there are no image or audio files.
+All art is drawn from shapes at runtime and all sound is synthesized at startup,
+including the music: an acid rave for playing, a chill-out version for the
+menus, and a dubstep drop (wobbles, growls, screeches) that takes over while the
+cops are smoked out. There are no image or audio files.
 
 ## Inspiration
 
