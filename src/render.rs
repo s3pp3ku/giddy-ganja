@@ -731,9 +731,13 @@ pub fn draw_playfield(world: &World, time: f64, pal: &Palette, fx: &Effects) {
     for (i, w) in world.cops.iter().enumerate() {
         let (x, y) = w.mover.pos_f();
         let mood = match w.state {
-            CopState::Stunned { until } => CopMood::Dazed {
-                ending: until.saturating_sub(world.t) < 70,
-            },
+            CopState::Stunned { until } => {
+                let left = until.saturating_sub(world.t);
+                CopMood::Dazed {
+                    left: left as f32 / stun_ticks(world.level_index) as f32,
+                    ending: left < 3 * TICKS_PER_SEC,
+                }
+            }
             CopState::Waiting { .. } => CopMood::Waiting,
             CopState::Hunting => CopMood::Hunting,
         };
@@ -774,6 +778,39 @@ pub fn draw_playfield(world: &World, time: f64, pal: &Palette, fx: &Effects) {
         }
     }
     fx.draw();
+    draw_smoke_timer(world, time, pal);
+}
+
+/// "COPS SMOKED OUT" with a bar that runs down while the smoke lasts, flashing near the end.
+fn draw_smoke_timer(world: &World, time: f64, pal: &Palette) {
+    let Some((left, total)) = world.smoked_out() else {
+        return;
+    };
+    let k = left as f32 / total.max(1) as f32;
+    let secs = left.div_ceil(TICKS_PER_SEC);
+    let ending = left < 3 * TICKS_PER_SEC;
+    let flash = ending && ((time * 10.0).sin() > 0.0);
+    let (w, h) = (220.0, 26.0);
+    let (x, y) = (LW / 2.0 - w / 2.0, 40.0);
+    rounded_rect(x - 2.0, y - 2.0, w + 4.0, h + 4.0, h / 2.0 + 2.0, INK);
+    rounded_rect(x, y, w, h, h / 2.0, alpha(c(30, 30, 50), 0.92));
+    let fill = if flash {
+        WHITE
+    } else {
+        art::theme_smoke(pal.theme, 0.0, time as f32)
+    };
+    if k > 0.0 {
+        rounded_rect(x, y, (w * k).max(h), h, h / 2.0, alpha(fill, 0.9));
+    }
+    let label = format!("COPS SMOKED OUT  {secs}");
+    text_centered(
+        Face::Display,
+        &label,
+        LW / 2.0,
+        y + 19.0,
+        15.0,
+        if flash { c(255, 80, 80) } else { INK },
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

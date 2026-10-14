@@ -84,8 +84,8 @@ pub struct Config {
     pub volume: u8,
     pub stop_on_release: bool,
     pub fullscreen: bool,
-    /// The retro "Classic" look (pastel hedges on black, blue menus) instead of the "Modern" one.
-    pub classic: bool,
+    /// Music volume 0..=7.
+    pub music: u8,
 }
 
 pub const SPEEDS: [(&str, f32); 4] = [
@@ -102,7 +102,7 @@ impl Default for Config {
             volume: 5,
             stop_on_release: false,
             fullscreen: false,
-            classic: true,
+            music: 4,
         }
     }
 }
@@ -114,8 +114,8 @@ impl Config {
 
     pub fn serialize(&self) -> String {
         format!(
-            "speed={}\nvolume={}\nstop_on_release={}\nfullscreen={}\nclassic={}\n",
-            self.speed, self.volume, self.stop_on_release, self.fullscreen, self.classic
+            "speed={}\nvolume={}\nstop_on_release={}\nfullscreen={}\nmusic={}\n",
+            self.speed, self.volume, self.stop_on_release, self.fullscreen, self.music
         )
     }
 
@@ -128,7 +128,7 @@ impl Config {
                     "volume" => c.volume = v.trim().parse().unwrap_or(c.volume).min(7),
                     "stop_on_release" => c.stop_on_release = v.trim() == "true",
                     "fullscreen" => c.fullscreen = v.trim() == "true",
-                    "classic" => c.classic = v.trim() == "true",
+                    "music" => c.music = v.trim().parse().unwrap_or(c.music).min(7),
                     _ => {}
                 }
             }
@@ -244,7 +244,7 @@ mod tests {
             volume: 3,
             stop_on_release: true,
             fullscreen: true,
-            classic: false,
+            music: 3,
         };
         assert_eq!(Config::parse(&c.serialize()), c);
     }

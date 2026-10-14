@@ -279,8 +279,10 @@ pub fn draw_giddy(
 pub enum CopMood {
     Hunting,
     Waiting,
-    /// Smoked out; `ending` flashes when the effect is about to wear off.
+    /// Smoked out. `left` is the share of the effect still to go (1 to 0); `ending` flashes
+    /// in the last few seconds.
     Dazed {
+        left: f32,
         ending: bool,
     },
 }
@@ -533,10 +535,30 @@ pub fn draw_cop(
     let badge = p(look.x * 1.5, -4.8);
     star(badge.x, badge.y, 2.2, tilt, c(255, 214, 70));
 
-    if let CopMood::Dazed { ending } = mood {
+    if let CopMood::Dazed { left, ending } = mood {
         dazed_aura(theme, h, t);
-        if ending && (t * 8.0).sin() > 0.0 {
-            ring(cx, cy, 16.0, 1.8, alpha(WHITE, 0.85));
+        // A timer ring over the cap that empties as the smoke clears, then flashes like a
+        // Pac-Man ghost about to recover.
+        let flash = ending && (t * 10.0).sin() > 0.0;
+        let (rx, ry) = (cx, cy - 25.0);
+        circle(rx, ry, 6.2, alpha(INK, 0.75));
+        let col = if flash {
+            WHITE
+        } else {
+            theme_smoke(theme, 0.0, t)
+        };
+        let n = 24;
+        let mut pts = vec![vec2(rx, ry)];
+        for i in 0..=n {
+            let a = -FRAC_PI_2 + left.clamp(0.0, 1.0) * TAU * i as f32 / n as f32;
+            pts.push(vec2(rx + a.cos() * 5.0, ry + a.sin() * 5.0));
+        }
+        if left > 0.0 {
+            fan(vec2(rx, ry), &pts[1..], col);
+            fan(vec2(rx, ry), &[pts[0], pts[1], pts[2]], col);
+        }
+        if flash {
+            ring(cx, cy, 16.0, 2.0, alpha(WHITE, 0.9));
         }
     }
 }

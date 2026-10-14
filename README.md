@@ -48,12 +48,15 @@ Linux needs the ALSA and X11/GL development headers
 | Pause | P |
 | Fullscreen | F11 |
 | Volume / mute | 0-7 / M |
+| Music on/off | N |
 
 ## Rules
 
 - Grab every leaf (10 points), then reach the exit at the top of the maze.
-- Pick up the level's stash (up to 3). Lighting one up clouds every cop in range
-  for five seconds. Bump a dazed cop to send them back to the donut shop for
+- Pick up the level's stash (up to 3). Lighting one up clouds every cop within
+  six tiles: 10 seconds on level 1, half a second less each level, never under
+  6. A bar at the top and a ring over each dazed cop count it down; in the last
+  three seconds they flash and tick. Bump a dazed cop to send them back to the donut shop for
   100, 200, 400, 800 points in a chain.
 - Beat the par time for a bonus; an extra life every 5000 points.
 - The cops think like Pac-Man ghosts: at each junction they head the way that
@@ -72,7 +75,8 @@ Flags: `--demo [level]` (watch the autopilot), `--level N`,
 
 `cargo test` runs the headless logic suite: movement, cop AI (never idle, no
 U-turns), level validity and no dead ends, and an autopilot that clears levels.
-All art is drawn from shapes at runtime; there are no image files.
+All art is drawn from shapes at runtime and all sound, including the reggae music
+loops, is synthesized at startup; there are no image or audio files.
 
 ## Inspiration
 

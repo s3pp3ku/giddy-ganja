@@ -4,6 +4,7 @@
 
 mod art;
 mod gfx;
+mod music;
 mod render;
 mod sfx;
 
@@ -12,6 +13,7 @@ use giddy_ganja::game::*;
 use giddy_ganja::grid::Dir;
 use giddy_ganja::storage::{self, Config, HighScores, SPEEDS};
 use macroquad::prelude::*;
+use music::{Music, Tune};
 use render::*;
 use sfx::*;
 
@@ -49,6 +51,8 @@ struct Play {
     leaf_toggle: bool,
     announced_ready: bool,
     game_over_timer: f32,
+    /// Whole seconds of smoke left at the last frame (for the warning ticks).
+    smoke_secs: u64,
     /// Demo mode: the autopilot plays and you just watch (press any key to stop).
     bot: Option<Autopilot>,
 }
@@ -146,6 +150,7 @@ struct App {
     config: Config,
     scores: HighScores,
     sounds: Sounds,
+    music: Music,
     play: Option<Play>,
     controls: Controls,
     start_level: usize,
@@ -192,6 +197,7 @@ impl App {
             leaf_toggle: false,
             announced_ready: false,
             game_over_timer: 0.0,
+            smoke_secs: 0,
             bot: None,
         });
         self.screen = Screen::Play;
@@ -316,7 +322,8 @@ impl App {
         heading("OPTIONS", LW / 2.0, 72.0, 46.0);
         let items: Vec<String> = vec![
             format!("Speed:  < {} >", SPEEDS[self.config.speed].0),
-            format!("Volume:  < {} >", self.config.volume),
+            format!("Sound:  < {} >", self.config.volume),
+            format!("Music:  < {} >", self.config.music),
             format!(
                 "Movement:  < {} >",
                 if self.config.stop_on_release {
@@ -340,7 +347,7 @@ impl App {
         } else {
             0
         };
-        let activated = self.menu(&items, LW / 2.0, 140.0, 50.0, 18.0);
+        let activated = self.menu(&items, LW / 2.0, 128.0, 46.0, 18.0);
         let step = if activated.is_some() && step == 0 {
             1
         } else {
@@ -361,10 +368,15 @@ impl App {
                     changed = true;
                 }
                 2 => {
-                    self.config.stop_on_release = !self.config.stop_on_release;
+                    self.config.music = (self.config.music as i32 + step).clamp(0, 7) as u8;
+                    self.music.set_volume(self.config.music);
                     changed = true;
                 }
                 3 => {
+                    self.config.stop_on_release = !self.config.stop_on_release;
+                    changed = true;
+                }
+                4 => {
                     self.config.fullscreen = !self.config.fullscreen;
                     set_fullscreen(self.config.fullscreen);
                     changed = true;
@@ -538,7 +550,7 @@ impl App {
             "An extra life every 5000 points. The cops hurry up when few leaves remain.",
             "",
             "Move: arrow keys or WASD      Light up: Space or Z      Pause: P",
-            "Esc: pause menu      F11: fullscreen      0-7: volume      M: mute",
+            "Esc: pause      F11: fullscreen      0-7: volume      M: mute      N: music",
             "On a touch screen: swipe to move, tap with two fingers to light up.",
         ];
         for (i, l) in lines.iter().enumerate() {
@@ -763,6 +775,15 @@ impl App {
 
         let Some(play) = &mut self.play else { return };
         play.fx.update(dt);
+        // Tick each of the last three seconds of smoke, so you know it is wearing off.
+        let secs = play
+            .world
+            .smoked_out()
+            .map_or(0, |(left, _)| left.div_ceil(TICKS_PER_SEC));
+        if secs < play.smoke_secs && (1..=3).contains(&secs) {
+            self.sounds.play(Sfx::Tick);
+        }
+        play.smoke_secs = secs;
 
         // Next level.
         if play.world.ready_for_next_level() {
@@ -912,12 +933,14 @@ async fn main() {
     set_fullscreen(config.fullscreen);
     load_fonts();
     let sounds = Sounds::load(config.volume).await;
+    let music = Music::load(config.music).await;
     let mut app = App {
         screen: Screen::Title,
         menu: 0,
         config,
         scores: storage::load_scores(),
         sounds,
+        music,
         play: None,
         controls: Controls::default(),
         start_level: 0,
@@ -1061,6 +1084,16 @@ async fn main() {
             };
         }
 
+        app.music.set(Some(match app.screen {
+            Screen::Play | Screen::Paused => Tune::Game,
+            _ => Tune::Menu,
+        }));
+        if is_key_pressed(KeyCode::N) && app.screen != Screen::EnterName {
+            let v = if app.config.music == 0 { 4 } else { 0 };
+            app.config.music = v;
+            app.music.set_volume(v);
+            app.save_config();
+        }
         match app.screen {
             Screen::Title => app.title(time),
             Screen::Options => app.options(time),

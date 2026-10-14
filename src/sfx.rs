@@ -2,10 +2,10 @@
 
 use macroquad::audio::{load_sound_from_bytes, play_sound, PlaySoundParams, Sound};
 
-const RATE: u32 = 22_050;
+pub const RATE: u32 = 22_050;
 
 /// Encode mono samples (-1..1) as a 16-bit PCM WAV file in memory.
-fn wav(samples: &[f32]) -> Vec<u8> {
+pub fn wav(samples: &[f32]) -> Vec<u8> {
     let data_len = (samples.len() * 2) as u32;
     let mut out = Vec::with_capacity(44 + data_len as usize);
     out.extend_from_slice(b"RIFF");
@@ -107,6 +107,8 @@ pub enum Sfx {
     MenuMove,
     MenuSelect,
     GameOver,
+    /// A wood-block tock: the smoke is wearing off.
+    Tick,
 }
 
 pub struct Sounds {
@@ -171,6 +173,10 @@ fn build(sfx: Sfx) -> Vec<f32> {
             note(Wave::Square, 660.0, 660.0, 0.05, 0.22),
             note(Wave::Square, 990.0, 990.0, 0.09, 0.22),
         ]),
+        Sfx::Tick => mix(
+            note(Wave::Sine, 1250.0, 1000.0, 0.06, 0.55),
+            note(Wave::Triangle, 2500.0, 2000.0, 0.03, 0.15),
+        ),
         Sfx::GameOver => concat(
             [392.0, 349.0, 311.0, 262.0]
                 .iter()
@@ -198,6 +204,7 @@ impl Sounds {
             Sfx::MenuMove,
             Sfx::MenuSelect,
             Sfx::GameOver,
+            Sfx::Tick,
         ];
         let mut sounds = Vec::new();
         for sfx in all {
@@ -258,6 +265,7 @@ mod tests {
             Sfx::MenuMove,
             Sfx::MenuSelect,
             Sfx::GameOver,
+            Sfx::Tick,
         ] {
             let s = build(sfx);
             let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));

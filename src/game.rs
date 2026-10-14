@@ -10,7 +10,13 @@ pub const TICKS_PER_SEC: u64 = 60;
 /// Player speed in tiles per second at the Normal speed setting.
 pub const PLAYER_TILES_PER_SEC: f32 = 5.4;
 pub const MAX_JOINTS: u32 = 3;
-pub const STUN_TICKS: u64 = 5 * TICKS_PER_SEC;
+/// How long a cop stays smoked out on level `n` (zero-based): 10 seconds on the first level,
+/// half a second less each level after, never under 6. (Pac-Man's power pellets shrink from
+/// 6 seconds to nothing; this is kinder, and always worth lighting up.)
+pub fn stun_ticks(level_index: usize) -> u64 {
+    let secs = (10.0 - 0.5 * level_index as f32).max(6.0);
+    (secs * TICKS_PER_SEC as f32) as u64
+}
 pub const STUN_RADIUS: f32 = 6.0;
 pub const EXTRA_LIFE_EVERY: u32 = 5000;
 pub const READY_TICKS: u32 = 90;
@@ -273,6 +279,18 @@ impl World {
         }
     }
 
+    /// While any cop is smoked out: ticks until the last one wakes up, and the full duration.
+    pub fn smoked_out(&self) -> Option<(u64, u64)> {
+        self.cops
+            .iter()
+            .filter_map(|c| match c.state {
+                CopState::Stunned { until } => Some(until.saturating_sub(self.t)),
+                _ => None,
+            })
+            .max()
+            .map(|left| (left, stun_ticks(self.level_index)))
+    }
+
     pub fn elapsed_seconds(&self) -> f32 {
         self.t as f32 / TICKS_PER_SEC as f32
     }
@@ -465,7 +483,7 @@ impl World {
         }
         self.joints -= 1;
         self.chain = 0;
-        let until = self.t + STUN_TICKS;
+        let until = self.t + stun_ticks(self.level_index);
         for w in self.cops.iter_mut() {
             let (wx, wy) = w.mover.pos_f();
             let near = ((wx - px).powi(2) + (wy - py).powi(2)).sqrt() <= STUN_RADIUS;
@@ -810,6 +828,25 @@ mod tests {
     }
 
     #[test]
+    fn being_smoked_out_lasts_ten_seconds_at_first_and_never_under_six() {
+        assert_eq!(stun_ticks(0), 10 * TICKS_PER_SEC);
+        assert_eq!(stun_ticks(4), 8 * TICKS_PER_SEC);
+        assert_eq!(stun_ticks(30), 6 * TICKS_PER_SEC);
+        let mut w = calm_world(0);
+        w.joints = 1;
+        w.cops[0].state = CopState::Hunting;
+        w.cops[0].mover = Mover::new((w.player.tile.0 + 3, w.player.tile.1));
+        assert!(w.smoked_out().is_none());
+        w.tick(Input {
+            dir: None,
+            action: true,
+        });
+        let (left, total) = w.smoked_out().expect("a cop is smoked out");
+        assert_eq!(total, stun_ticks(0));
+        assert!(left > total - 3);
+    }
+
+    #[test]
     fn stunned_cops_wake_up_again() {
         let mut w = calm_world(0);
         w.joints = 1;
@@ -819,7 +856,7 @@ mod tests {
             dir: None,
             action: true,
         });
-        for _ in 0..STUN_TICKS + 5 {
+        for _ in 0..stun_ticks(0) + 5 {
             w.tick(Input::default());
             if matches!(w.phase, Phase::Dying(_)) {
                 return; // woke up and caught us: also proves it woke
