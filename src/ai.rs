@@ -1,20 +1,18 @@
-//! Cop artificial intelligence.
+//! Cop artificial intelligence, done the way the Pac-Man ghosts do it: deliberately not too clever.
 //!
-//! Every cop is always *going somewhere*. At each tile centre it picks the neighbouring tile
-//! that is closest (by real path length through the maze) to its current target. The four
-//! personalities differ only in what they target:
+//! At every junction a cop looks at the ways it could go (never straight back the way it came)
+//! and takes the one whose next tile is closest *as the crow flies* to its target. It does not
+//! plan routes, so it can be led astray by walls, and it never stops. Cops alternate between
+//! chasing and "scattering" to their own corner of the maze, which gives you breathing room.
+//! The four personalities differ only in what they chase:
 //!
 //! * **Hunter**   - straight at you.
-//! * **Ambusher** - the spot a few tiles ahead of where you are heading, to cut you off.
+//! * **Ambusher** - the spot a few tiles ahead of where you are heading.
 //! * **Flanker**  - a point mirrored through you from the Hunter, so the two pincer you.
-//! * **Prowler**  - chases when you are close, otherwise sweeps the maze towards leaves you have
-//!   not collected yet (so it patrols the places you still need to go).
-//!
-//! Nobody stands still, nobody gets stuck on a wall, and the routes are always optimal.
+//! * **Prowler**  - chases you from afar, but loses interest and wanders home when close.
 
 use crate::grid::*;
 use crate::levels::Level;
-use crate::rng::Rng;
 use std::collections::VecDeque;
 
 pub type DistMap = [[i32; W]; H];
@@ -89,18 +87,27 @@ pub fn nearest_walkable(level: &Level, p: Pos) -> Pos {
     best
 }
 
+/// The corner each cop drifts to while scattering (targets may lie outside the maze).
+pub fn home_corner(kind: Personality) -> Pos {
+    match kind {
+        Personality::Hunter => (W as i32 - 2, -2),
+        Personality::Ambusher => (1, -2),
+        Personality::Flanker => (W as i32 - 1, H as i32 + 1),
+        Personality::Prowler => (0, H as i32 + 1),
+    }
+}
+
 /// Where this cop wants to be right now.
-#[allow(clippy::too_many_arguments)]
 pub fn pick_target(
     kind: Personality,
     me: Pos,
     hunter: Pos,
     player: PlayerView,
-    level: &Level,
-    uncollected: &[Pos],
-    patrol_goal: &mut Option<Pos>,
-    rng: &mut Rng,
+    scatter: bool,
 ) -> Pos {
+    if scatter {
+        return home_corner(kind);
+    }
     match kind {
         Personality::Hunter => player.tile,
         Personality::Ambusher => ahead(player, 4),
@@ -109,20 +116,12 @@ pub fn pick_target(
             (a.0 + (a.0 - hunter.0), a.1 + (a.1 - hunter.1))
         }
         Personality::Prowler => {
-            let to_player = distances_to(level, player.tile)[me.1 as usize][me.0 as usize];
-            if to_player <= 7 {
-                *patrol_goal = None;
-                return player.tile;
+            let (dx, dy) = (me.0 - player.tile.0, me.1 - player.tile.1);
+            if dx * dx + dy * dy > 36 {
+                player.tile
+            } else {
+                home_corner(kind)
             }
-            let reached = patrol_goal.is_none_or(|g| manhattan(g, me) <= 1);
-            if reached {
-                *patrol_goal = if uncollected.is_empty() {
-                    Some(player.tile)
-                } else {
-                    Some(uncollected[rng.below(uncollected.len())])
-                };
-            }
-            patrol_goal.unwrap_or(player.tile)
         }
     }
 }
@@ -137,61 +136,84 @@ fn ahead(player: PlayerView, tiles: i32) -> Pos {
     }
 }
 
+/// The order Pac-Man ghosts break ties in.
+const TIE_ORDER: [Dir; 4] = [Dir::Up, Dir::Left, Dir::Down, Dir::Right];
+
 /// Pick the next direction at a tile centre. Always returns a direction if any move exists.
 ///
-/// Cops do not turn around for no reason: they only reverse when the way back is strictly
-/// the best route (or the only move), which prevents jittering at junctions.
+/// Out in the maze: the open way (not back) whose next tile is nearest the target in a straight
+/// line. Inside the donut shop the cop just takes the shortest way out, and once out it never
+/// walks back in by itself.
 pub fn choose_direction(
     level: &Level,
-    dist: &DistMap,
     tile: Pos,
     heading: Option<Dir>,
-    rng: &mut Rng,
+    target: Pos,
 ) -> Option<Dir> {
-    let mut options: Vec<(Dir, i32)> = Vec::with_capacity(4);
-    for d in Dir::ALL {
+    let in_pen = matches!(level.tile(tile), Tile::Pen);
+    if in_pen {
+        let exit = distances_to_exit_of_pen(level);
+        return Dir::ALL
+            .into_iter()
+            .filter(|&d| {
+                let n = step(tile, d);
+                in_bounds(n) && cop_can_enter(level, n)
+            })
+            .min_by_key(|&d| {
+                let n = step(tile, d);
+                exit[n.1 as usize][n.0 as usize]
+            });
+    }
+    let open = |d: Dir| {
         let n = step(tile, d);
-        if in_bounds(n) && cop_can_enter(level, n) {
-            options.push((d, dist[n.1 as usize][n.0 as usize]));
-        }
-    }
+        in_bounds(n) && matches!(level.tile(n), Tile::Floor)
+    };
+    let back = heading.map(Dir::opposite);
+    let mut options: Vec<Dir> = TIE_ORDER
+        .into_iter()
+        .filter(|&d| open(d) && Some(d) != back)
+        .collect();
     if options.is_empty() {
-        return None;
+        // A dead end (there should be none): turning round is the only way.
+        options = TIE_ORDER.into_iter().filter(|&d| open(d)).collect();
     }
-    let forward: Vec<(Dir, i32)> = match heading {
-        Some(h) => options
-            .iter()
-            .copied()
-            .filter(|&(d, _)| d != h.opposite())
-            .collect(),
-        None => options.clone(),
-    };
-    let best_forward = forward.iter().map(|&(_, v)| v).min();
-    let best_back = heading.and_then(|h| {
-        options
-            .iter()
-            .find(|&&(d, _)| d == h.opposite())
-            .map(|&(_, v)| v)
-    });
-    let pool: Vec<Dir> = match (best_forward, best_back) {
-        (Some(f), Some(b)) if b < f => options
-            .iter()
-            .filter(|&&(_, v)| v == b)
-            .map(|&(d, _)| d)
-            .collect(),
-        (Some(f), _) => forward
-            .iter()
-            .filter(|&&(_, v)| v == f)
-            .map(|&(d, _)| d)
-            .collect(),
-        (None, _) => options.iter().map(|&(d, _)| d).collect(),
-    };
-    if let Some(h) = heading {
-        if pool.contains(&h) {
-            return Some(h);
+    options.into_iter().min_by_key(|&d| {
+        let n = step(tile, d);
+        let (dx, dy) = (n.0 - target.0, n.1 - target.1);
+        dx * dx + dy * dy
+    })
+}
+
+/// Path length from every tile to the nearest corridor tile just outside the pen.
+fn distances_to_exit_of_pen(level: &Level) -> DistMap {
+    let mut dist = [[FAR; W]; H];
+    let mut queue = VecDeque::new();
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            let p = (x, y);
+            let next_to_pen = Dir::ALL
+                .iter()
+                .any(|&d| matches!(level.tile(step(p, d)), Tile::Pen));
+            if matches!(level.tile(p), Tile::Floor) && next_to_pen {
+                dist[y as usize][x as usize] = 0;
+                queue.push_back(p);
+            }
         }
     }
-    Some(pool[rng.below(pool.len())])
+    while let Some(p) = queue.pop_front() {
+        let d = dist[p.1 as usize][p.0 as usize];
+        for dir in Dir::ALL {
+            let n = step(p, dir);
+            if in_bounds(n)
+                && matches!(level.tile(n), Tile::Pen)
+                && dist[n.1 as usize][n.0 as usize] == FAR
+            {
+                dist[n.1 as usize][n.0 as usize] = d + 1;
+                queue.push_back(n);
+            }
+        }
+    }
+    dist
 }
 
 #[cfg(test)]
@@ -215,32 +237,45 @@ mod tests {
     }
 
     #[test]
-    fn walking_downhill_reaches_the_target() {
-        let l = level(1);
-        let target = l.start;
-        let d = distances_to(&l, target);
-        let mut rng = Rng::new(1);
-        let mut tile = l.pen[0];
-        let mut heading = None;
-        for _ in 0..200 {
-            if tile == target {
-                return;
+    fn cops_never_turn_back_by_themselves_and_always_have_a_move() {
+        for n in 0..20 {
+            let l = level(n);
+            for y in 0..H as i32 {
+                for x in 0..W as i32 {
+                    if !matches!(l.tile((x, y)), Tile::Floor) {
+                        continue;
+                    }
+                    for heading in Dir::ALL {
+                        // Only headings a cop could actually arrive with.
+                        if !matches!(
+                            l.tile(step((x, y), heading.opposite())),
+                            Tile::Floor | Tile::Pen
+                        ) {
+                            continue;
+                        }
+                        let d = choose_direction(&l, (x, y), Some(heading), (0, 0))
+                            .unwrap_or_else(|| panic!("level {n}: stuck at {x},{y}"));
+                        assert_ne!(d, heading.opposite(), "level {n}: U-turn at {x},{y}");
+                    }
+                }
             }
-            let dir = choose_direction(&l, &d, tile, heading, &mut rng).expect("a move exists");
-            tile = step(tile, dir);
-            heading = Some(dir);
         }
-        panic!("never reached the target");
     }
 
     #[test]
-    fn never_reverses_without_reason() {
+    fn cops_walk_out_of_the_donut_shop() {
         let l = level(0);
-        let d = distances_to(&l, (1, 1));
-        let mut rng = Rng::new(5);
-        // Start in a corridor heading away from the target; the best route is behind, so it may turn.
-        let dir = choose_direction(&l, &d, (3, 1), Some(Dir::Right), &mut rng);
-        assert!(dir.is_some());
+        let mut tile = l.pen[0];
+        let mut heading = None;
+        for _ in 0..6 {
+            if matches!(l.tile(tile), Tile::Floor) {
+                return;
+            }
+            let d = choose_direction(&l, tile, heading, (0, 0)).expect("a way out");
+            tile = step(tile, d);
+            heading = Some(d);
+        }
+        panic!("still inside");
     }
 
     #[test]

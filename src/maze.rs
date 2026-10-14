@@ -6,30 +6,26 @@ use crate::grid::*;
 use crate::levels::Level;
 use crate::rng::Rng;
 
-const WORDS: [&str; 8] = [
-    "Munchies",
-    "Couch Lock",
-    "Cloud Nine",
-    "Pipe Dreams",
-    "Hotbox",
-    "Mellow Yellow",
-    "Blazed Trails",
-    "Grow Room",
-];
-
 /// Generate a valid level. `n` is the zero-based level number, `seed` makes it reproducible.
 pub fn generate(seed: u64, n: usize, cops: usize, speed: f32) -> Level {
     for attempt in 0..2000u64 {
         let mut rng = Rng::new(seed.wrapping_mul(1_000_003).wrapping_add(attempt));
         let art = carve(&mut rng, n);
-        let name = format!("{} {}", WORDS[n % WORDS.len()], n + 1);
+        let name = crate::themes::level_name(n);
         let par = 70 + (n as u32).min(24) * 2;
         if let Ok(level) = Level::parse(&name, &art, cops, speed, par) {
             return level;
         }
     }
     // Practically unreachable (the generator succeeds within a handful of attempts), but never panic in a game.
-    Level::parse("Fresh Sprout", FALLBACK, cops.min(4), speed, 80).expect("fallback level is valid")
+    Level::parse(
+        &crate::themes::level_name(n),
+        FALLBACK,
+        cops.min(4),
+        speed,
+        80,
+    )
+    .expect("fallback level is valid")
 }
 
 const FALLBACK: &str = "
@@ -106,6 +102,82 @@ fn carve(rng: &mut Rng, n: usize) -> String {
     let pen = [(9usize, 5usize), (10, 5), (9, 6), (10, 6)];
     for &(x, y) in &pen {
         wall[y][x] = false;
+    }
+
+    // No dead ends: wherever a corridor stops, knock through to the nearest other corridor,
+    // so that (as in Pac-Man) you can always keep running.
+    let walkable = |wall: &[[bool; W]; H], x: i32, y: i32| {
+        x > 0
+            && y > 0
+            && x < W as i32 - 1
+            && y < H as i32 - 1
+            && !wall[y as usize][x as usize]
+            && !pen.contains(&(x as usize, y as usize))
+    };
+    for _ in 0..50 {
+        let mut changed = false;
+        for y in 1..H as i32 - 1 {
+            for x in 1..W as i32 - 1 {
+                if !walkable(&wall, x, y) {
+                    continue;
+                }
+                let exits = Dir::ALL
+                    .iter()
+                    .filter(|d| {
+                        let (dx, dy) = d.delta();
+                        walkable(&wall, x + dx, y + dy)
+                    })
+                    .count();
+                if exits >= 2 {
+                    continue;
+                }
+                let through: Vec<(usize, usize)> = Dir::ALL
+                    .iter()
+                    .filter_map(|d| {
+                        let (dx, dy) = d.delta();
+                        let (wx, wy) = (x + dx, y + dy);
+                        let inside = wx > 0 && wy > 0 && wx < W as i32 - 1 && wy < H as i32 - 1;
+                        let is_wall = inside && wall[wy as usize][wx as usize];
+                        let beyond = walkable(&wall, x + 2 * dx, y + 2 * dy);
+                        (is_wall && beyond).then_some((wx as usize, wy as usize))
+                    })
+                    .collect();
+                if !through.is_empty() {
+                    let (wx, wy) = through[rng.below(through.len())];
+                    wall[wy][wx] = false;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Any stub that could not be knocked through is filled in. (If that cuts the pen off, the
+    // level fails validation and another attempt is made.)
+    loop {
+        let stubs: Vec<(usize, usize)> = (1..H as i32 - 1)
+            .flat_map(|y| (1..W as i32 - 1).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                walkable(&wall, x, y)
+                    && Dir::ALL
+                        .iter()
+                        .filter(|d| {
+                            let (dx, dy) = d.delta();
+                            walkable(&wall, x + dx, y + dy)
+                        })
+                        .count()
+                        < 2
+            })
+            .map(|(x, y)| (x as usize, y as usize))
+            .collect();
+        if stubs.is_empty() {
+            break;
+        }
+        for (x, y) in stubs {
+            wall[y][x] = true;
+        }
     }
 
     // Start and exit on opposite sides.

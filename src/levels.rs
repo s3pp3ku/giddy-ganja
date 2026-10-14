@@ -97,6 +97,22 @@ impl Level {
         }
     }
 
+    /// Corridor tiles with only one way in or out (the pen does not count as a way out).
+    pub fn dead_ends(&self) -> Vec<Pos> {
+        let open = |p: Pos| matches!(self.tile(p), Tile::Floor | Tile::Gate);
+        let mut out = Vec::new();
+        for y in 0..H as i32 {
+            for x in 0..W as i32 {
+                if matches!(self.tile((x, y)), Tile::Floor)
+                    && Dir::ALL.iter().filter(|&&d| open(step((x, y), d))).count() < 2
+                {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
     pub fn leaf_count(&self) -> usize {
         self.leaves.iter().flatten().filter(|&&b| b).count()
     }
@@ -206,7 +222,7 @@ const HEDGEROW: &str = "
 #.#..............#.#
 #.#.####.WW.####.#.#
 #...#....WW....#...#
-#.#.#.##....##.#.#.#
+#.#.#.#......#.#.#.#
 #.#...#.####.#...#.#
 #.###.#......#.###.#
 #*....##.##.##.....#
@@ -217,15 +233,15 @@ const HEDGEROW: &str = "
 const CROSSWIND: &str = "
 #E##################
 #..................#
-#.###.##.##.##.###.#
+#.###.########.###.#
 #.#.....####.....#.#
 #.#.###.#WW#.###.#.#
-#...#....WW......#.#
+#...#...#WW......#.#
 ###.#.###....###.#.#
 #...#...#.##.#...#.#
-#.#####.#.##.#.#####
+#.#####.#.##.#.###.#
 #*......#....#.....#
-#.##.##.P.##.##.#*.#
+#######.P.#####..*.#
 ####################
 ";
 
@@ -238,9 +254,9 @@ const BRAMBLE: &str = "
 #...#...#WW#...#...#
 ###.#.###..###.#.###
 #...#...#..#...#...#
-#.#####.#..#.#####.#
+#.#####.#..#.#.###.#
 #.#............#...#
-#*...##..P...##...*#
+#*...##..P...###..*#
 ####################
 ";
 
@@ -262,14 +278,15 @@ pub fn difficulty(n: usize) -> (usize, f32) {
 /// generated garden, so the game never runs out. The same `n` always gives the same level.
 pub fn level(n: usize) -> Level {
     let (cops, speed) = difficulty(n);
+    let name = crate::themes::level_name(n);
     let hand = |name: &str, art: &str, par: u32| {
         Level::parse(name, art, cops, speed, par).expect("built-in levels are valid")
     };
     match n {
-        0 => hand("Fresh Sprout", SEEDLING, 75),
-        1 => hand("Backyard Grow", HEDGEROW, 80),
-        2 => hand("Smoke Break", CROSSWIND, 85),
-        3 => hand("Reefer Madness", BRAMBLE, 85),
+        0 => hand(&name, SEEDLING, 75),
+        1 => hand(&name, HEDGEROW, 80),
+        2 => hand(&name, CROSSWIND, 85),
+        3 => hand(&name, BRAMBLE, 85),
         _ => crate::maze::generate(0xA11CE + n as u64, n, cops, speed),
     }
 }
@@ -289,6 +306,18 @@ mod tests {
             let l = level(n);
             l.validate().unwrap_or_else(|e| panic!("{e}"));
             assert!(l.leaf_count() > 50, "{} has too few leaves", l.name);
+        }
+    }
+
+    #[test]
+    fn no_level_has_dead_ends() {
+        for n in 0..60 {
+            let l = level(n);
+            assert!(
+                l.dead_ends().is_empty(),
+                "level {n} has dead ends at {:?}",
+                l.dead_ends()
+            );
         }
     }
 

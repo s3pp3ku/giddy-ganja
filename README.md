@@ -1,13 +1,35 @@
 # Giddy Ganja
 
-A cartoon cannabis arcade maze for adults. You are a happy little pot leaf.
-Gather every bud, light a joint to cloud the cops in smoke, and slip out the
-exit before the police (and their donut habit) catch up. Written from scratch
-in Rust with [macroquad](https://macroquad.rs); runs on Linux, Windows and macOS.
+A cartoon cannabis arcade maze for adults. You are Giddy, a happy little pot leaf. Grab every
+leaf in the maze, pick up the level's stash and light it up to smoke out the cops, then slip
+out the exit before the police (and their donut habit) catch up. Written from scratch in Rust
+with [macroquad](https://macroquad.rs); runs on Linux, Windows and macOS.
 
 Comedic and cartoonish only: there is nothing instructional in it.
 
-![Giddy Ganja](docs/screenshot.png)
+![Title screen](docs/title.png)
+
+![Bong Water, with a cloud of smoke](docs/play.png)
+
+![Acid Flashback](docs/acid.png)
+
+## Every level has its own stash
+
+| Level | Place | Stash |
+|---|---|---|
+| 1 | Rolling Papers | joints |
+| 2 | Bong Water | red bongs |
+| 3 | The Golden Bowl | gold pipes |
+| 4 | Acid Flashback | acid tabs |
+| 5 | Shroom Grove | magic mushrooms |
+| 6 | Hookah Lounge | hookahs |
+| 7 | Pot Brownie Bakery | pot brownies |
+| 8 | Blunt Force | blunts |
+| 9 | Peyote Desert | peyote buttons |
+| 10 | Space Cake | space cakes |
+
+After that the themes come round again (Rolling Papers 2, ...) with new mazes and faster cops,
+forever.
 
 ## Play
 
@@ -29,22 +51,28 @@ Linux needs the ALSA and X11/GL development headers
 
 ## Rules
 
-- Eat every bud (10 points), then reach the exit at the top of the maze.
-- Pick up joints (up to 3). Lighting one clouds every cop in range for five
-  seconds. Touch a dazed cop to send them back to the donut shop for
+- Grab every leaf (10 points), then reach the exit at the top of the maze.
+- Pick up the level's stash (up to 3). Lighting one up clouds every cop in range
+  for five seconds. Bump a dazed cop to send them back to the donut shop for
   100, 200, 400, 800 points in a chain.
 - Beat the par time for a bonus; an extra life every 5000 points.
-- Cops use four different chase personalities, never stand still, and speed up
-  when few buds remain.
-- 4 hand-made levels, then endless generated mazes.
+- The cops think like Pac-Man ghosts: at each junction they head the way that
+  looks closest to their target, never turn back on their own, and take turns
+  chasing you and wandering off to their home corners. Each has a personality
+  (one hunts you, one cuts you off, one flanks, one loses interest up close).
+  They never stand still, and they speed up when few leaves remain.
+- No dead ends, ever: like Pac-Man, you can always keep running.
+- 4 hand-made mazes, then endless generated ones.
 
-Options include speed, stop-on-release steering, lives, and a Classic/Modern
-look. Flags: `--demo [level]` (autopilot), `--level N`.
+Options include speed, volume, stop-on-release steering and fullscreen.
+Flags: `--demo [level]` (watch the autopilot), `--level N`,
+`--shot FILE SECONDS` (save a screenshot and quit).
 
 ## Develop
 
-`cargo test` runs the headless logic suite (movement, cop AI, level validity,
-an autopilot that clears levels).
+`cargo test` runs the headless logic suite: movement, cop AI (never idle, no
+U-turns), level validity and no dead ends, and an autopilot that clears levels.
+All art is drawn from shapes at runtime; there are no image files.
 
 ## Inspiration
 
@@ -55,4 +83,6 @@ original.
 
 ## License
 
-MIT
+The code is MIT. The bundled fonts keep their own licences:
+[Luckiest Guy](assets/fonts/LuckiestGuy-LICENSE.txt) (Apache 2.0, by Astigmatic) and
+[Fredoka](assets/fonts/Fredoka-OFL.txt) (SIL Open Font License 1.1), both subset to Latin.

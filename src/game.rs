@@ -5,7 +5,6 @@
 use crate::ai::{self, Personality, PlayerView};
 use crate::grid::*;
 use crate::levels::{self, Level};
-use crate::rng::Rng;
 
 pub const TICKS_PER_SEC: u64 = 60;
 /// Player speed in tiles per second at the Normal speed setting.
@@ -17,7 +16,8 @@ pub const EXTRA_LIFE_EVERY: u32 = 5000;
 pub const READY_TICKS: u32 = 90;
 pub const DYING_TICKS: u32 = 100;
 pub const CLEARED_TICKS: u32 = 150;
-const CATCH_DISTANCE: f32 = 0.58;
+/// How close (in tiles, centre to centre) a cop has to get to grab you.
+const CATCH_DISTANCE: f32 = 0.7;
 pub const LEAF_POINTS: u32 = 10;
 pub const SPARKLER_POINTS: u32 = 50;
 pub const PULSE_TICKS: u32 = 36;
@@ -192,7 +192,6 @@ pub struct Cop {
     pub kind: Personality,
     pub state: CopState,
     pub pen_cell: Pos,
-    patrol_goal: Option<Pos>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -222,10 +221,10 @@ pub struct World {
     /// Practice/debug: cops cannot catch you. Never on in normal play.
     pub invulnerable: bool,
     desired: Option<Dir>,
+    was_scattering: bool,
     prev_action: bool,
     chain: u32,
     next_extra_life: u32,
-    rng: Rng,
 }
 
 impl World {
@@ -254,10 +253,10 @@ impl World {
             pulse: None,
             events: Vec::new(),
             desired: None,
+            was_scattering: true,
             prev_action: false,
             chain: 0,
             next_extra_life: (carry.score / EXTRA_LIFE_EVERY + 1) * EXTRA_LIFE_EVERY,
-            rng: Rng::new(0x5EED + level_index as u64),
             settings,
             invulnerable: false,
             level,
@@ -298,7 +297,6 @@ impl World {
                         release_at: self.t + i as u64 * stagger,
                     },
                     pen_cell: cell,
-                    patrol_goal: None,
                 }
             })
             .collect();
@@ -482,19 +480,29 @@ impl World {
         self.events.push(Event::JointUsed);
     }
 
+    /// Pac-Man style mode timer: scatter 7s, chase 20s, scatter 7s, chase 20s, scatter 5s, then
+    /// chase for good. Cops spend later levels scattering for less time.
+    fn scattering(&self) -> bool {
+        let secs = self.elapsed_seconds();
+        let short = if self.level_index >= 4 { 2.0 } else { 0.0 };
+        let mut t = 0.0;
+        for (scatter, len) in [
+            (true, 7.0 - short),
+            (false, 20.0),
+            (true, 7.0 - short),
+            (false, 20.0),
+            (true, 5.0 - short),
+        ] {
+            t += len;
+            if secs < t {
+                return scatter;
+            }
+        }
+        false
+    }
+
     fn update_cops(&mut self) {
         let speed = self.cop_speed();
-        let uncollected: Vec<Pos> = {
-            let mut v = Vec::new();
-            for y in 0..H {
-                for x in 0..W {
-                    if self.leaves[y][x] {
-                        v.push((x as i32, y as i32));
-                    }
-                }
-            }
-            v
-        };
         let player = PlayerView {
             tile: self.player.nearest_tile(),
             heading: self.player.dir.or(self.desired),
@@ -503,6 +511,10 @@ impl World {
             .cops
             .first()
             .map_or(player.tile, |w| w.mover.nearest_tile());
+        let scatter = self.scattering();
+        // Like the ghosts, cops turn round when the mode changes, which is your cue.
+        let flipped = scatter != self.was_scattering;
+        self.was_scattering = scatter;
         for i in 0..self.cops.len() {
             let mut w = self.cops[i].clone();
             match w.state {
@@ -515,24 +527,14 @@ impl World {
             }
             if w.state == CopState::Hunting {
                 let level = &self.level;
-                let rng = &mut self.rng;
+                if flipped && matches!(level.tile(w.mover.tile), Tile::Floor) {
+                    w.mover.reverse();
+                }
                 let kind = w.kind;
-                let mut goal = w.patrol_goal;
                 w.mover.advance(speed, |tile, heading| {
-                    let target = ai::pick_target(
-                        kind,
-                        tile,
-                        hunter,
-                        player,
-                        level,
-                        &uncollected,
-                        &mut goal,
-                        rng,
-                    );
-                    let dist = ai::distances_to(level, target);
-                    ai::choose_direction(level, &dist, tile, heading, rng)
+                    let target = ai::pick_target(kind, tile, hunter, player, scatter);
+                    ai::choose_direction(level, tile, heading, target)
                 });
-                w.patrol_goal = goal;
             }
             self.cops[i] = w;
         }
@@ -1004,6 +1006,59 @@ mod tests {
                 w.player.progress
             );
             assert_eq!(w.leaves_left, 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod demo_quality {
+    use super::*;
+
+    /// The demo autopilot plays for real (the cops can catch it); it should still put on a show.
+    fn play(level: usize, cautious: bool, joints: bool) -> (u32, u32, f32) {
+        let mut w = World::new(level, Settings::default(), None);
+        let mut bot = if cautious {
+            crate::bot::Autopilot::cautious()
+        } else {
+            crate::bot::Autopilot::new()
+        };
+        let total = w.level.leaf_count() as u32;
+        let mut cleared = 0;
+        for _ in 0..60 * 240 {
+            if w.phase == Phase::GameOver {
+                break;
+            }
+            if matches!(w.phase, Phase::Cleared(_)) {
+                cleared = 1;
+                break;
+            }
+            let near = w.cops.iter().any(|c| {
+                let (cx, cy) = c.mover.pos_f();
+                let (px, py) = w.player.pos_f();
+                ((cx - px).powi(2) + (cy - py).powi(2)).sqrt() < 2.2
+            });
+            let dir = bot.decide(&w);
+            w.tick(Input {
+                dir,
+                action: joints && near && w.t % 7 == 0,
+            });
+        }
+        (cleared, total - w.leaves_left, w.elapsed_seconds())
+    }
+
+    #[test]
+    fn the_demo_clears_the_first_level_against_real_cops() {
+        assert_eq!(play(0, true, true).0, 1);
+    }
+
+    /// `cargo test --release -- --ignored --nocapture report` prints how the demo fares.
+    #[test]
+    #[ignore]
+    fn report() {
+        for level in 0..10 {
+            let a = play(level, false, true);
+            let b = play(level, true, true);
+            println!("level {level}: plain cleared={} leaves={} secs={:.0} | cautious cleared={} leaves={} secs={:.0}", a.0, a.1, a.2, b.0, b.1, b.2);
         }
     }
 }

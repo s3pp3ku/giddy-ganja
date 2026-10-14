@@ -1,12 +1,15 @@
 //! Giddy Ganja: window, menus and the main loop. The rules live in the library crate.
+// Drawing helpers naturally take many plain coordinates; bundling them would not make them clearer.
+#![allow(clippy::too_many_arguments)]
 
+mod art;
+mod gfx;
 mod render;
 mod sfx;
 
 use giddy_ganja::bot::Autopilot;
 use giddy_ganja::game::*;
 use giddy_ganja::grid::Dir;
-use giddy_ganja::levels;
 use giddy_ganja::storage::{self, Config, HighScores, SPEEDS};
 use macroquad::prelude::*;
 use render::*;
@@ -199,8 +202,8 @@ impl App {
     fn start_demo(&mut self, level: usize) {
         self.start_game(level);
         if let Some(p) = &mut self.play {
-            p.world.invulnerable = true;
-            p.bot = Some(Autopilot::new());
+            // The demo plays by the real rules: the cops can and do catch it.
+            p.bot = Some(Autopilot::cautious());
         }
     }
 
@@ -225,13 +228,15 @@ impl App {
         let mut chosen = None;
         let pointer = self.pointer();
         let moved = mouse_delta_position().length() > 0.0001;
+        let time = get_time();
         for (i, item) in items.iter().enumerate() {
             let y = y0 + i as f32 * spacing;
-            let w = measure_text(item, None, size as u16, 1.0).width.max(160.0);
-            let hit = pointer.x > cx - w / 2.0 - 12.0
-                && pointer.x < cx + w / 2.0 + 12.0
-                && pointer.y > y - size
-                && pointer.y < y + size * 0.4;
+            let selected = self.menu == i;
+            let (w, h) = button(item, cx, y, size, 150.0, selected, time);
+            let hit = pointer.x > cx - w / 2.0
+                && pointer.x < cx + w / 2.0
+                && pointer.y > y - size * 1.1
+                && pointer.y < y - size * 1.1 + h;
             if hit && moved && self.menu != i {
                 self.menu = i;
                 self.sounds.play(Sfx::MenuMove);
@@ -239,32 +244,6 @@ impl App {
             if hit && self.clicked() {
                 self.menu = i;
                 chosen = Some(i);
-            }
-            let selected = self.menu == i;
-            if classic() {
-                // White push-buttons with black text; the chosen one gets a heavy black frame.
-                let (bx, by, bw, bh) =
-                    (cx - w / 2.0 - 14.0, y - size * 0.85, w + 28.0, size * 1.15);
-                draw_rectangle(bx, by, bw, bh, WHITE);
-                draw_rectangle_lines(bx, by, bw, bh, if selected { 4.0 } else { 1.5 }, BLACK);
-                if selected {
-                    draw_rectangle_lines(bx - 4.0, by - 4.0, bw + 8.0, bh + 8.0, 3.0, c_green());
-                }
-                let tw = measure_text(item, None, size as u16, 1.0).width;
-                draw_text(item, cx - tw / 2.0, y, size, BLACK);
-            } else {
-                let color = if selected { title_green() } else { dim() };
-                if selected {
-                    draw_rectangle(
-                        cx - w / 2.0 - 14.0,
-                        y - size * 0.85,
-                        w + 28.0,
-                        size * 1.15,
-                        Color::new(0.1, 0.3, 0.15, 0.55),
-                    );
-                    centered(">", cx - w / 2.0 - 4.0, y, size, accent_for(0));
-                }
-                centered(item, cx, y, size, color);
             }
         }
         if is_key_pressed(KeyCode::Enter)
@@ -280,32 +259,17 @@ impl App {
     }
 
     fn backdrop(&self, time: f64) {
-        draw_rectangle(0.0, 0.0, LW, LH, menu_bg());
-        if classic() {
-            return;
-        }
-        for i in 0..14 {
-            let t = time as f32 * 0.25 + i as f32 * 0.37;
-            let x = ((t * 53.0 + i as f32 * 71.0) % (LW + 60.0)) - 30.0;
-            let y = ((i as f32 * 97.0 + t * 38.0) % (LH + 60.0)) - 30.0;
-            draw_circle(
-                x,
-                y,
-                18.0 + (i % 4) as f32 * 7.0,
-                Color::new(0.1, 0.35, 0.18, 0.10),
-            );
-        }
+        draw_backdrop(time);
     }
 
     fn title(&mut self, time: f64) {
         self.backdrop(time);
-        draw_title_art(LW / 2.0, 92.0, time);
-        centered("GIDDY GANJA", LW / 2.0 + 60.0, 96.0, 64.0, title_green());
+        draw_title_art(time);
         centered(
-            "gather every bud  -  dodge the cops  -  slip out the exit",
-            LW / 2.0,
-            136.0,
-            18.0,
+            "Grab every leaf. Dodge the cops. Light 'em up. Get out.",
+            LW / 2.0 + 70.0,
+            140.0,
+            16.0,
             dim(),
         );
         let mut items = vec![
@@ -319,7 +283,7 @@ impl App {
             items.push("Quit");
         }
         let items: Vec<String> = items.into_iter().map(String::from).collect();
-        if let Some(i) = self.menu(&items, LW / 2.0, 214.0, 38.0, 26.0) {
+        if let Some(i) = self.menu(&items, LW / 2.0 + 70.0, 196.0, 38.0, 19.0) {
             match items[i].as_str() {
                 "Play" => self.start_game(0),
                 "Level Select" => {
@@ -339,7 +303,7 @@ impl App {
             }
         }
         centered(
-            "Arrow keys or WASD to move  -  Space uses a joint  -  P pauses  -  F11 fullscreen",
+            "Arrows or WASD to move  -  Space to light up  -  P pauses  -  F11 fullscreen",
             LW / 2.0,
             LH - 28.0,
             15.0,
@@ -349,7 +313,7 @@ impl App {
 
     fn options(&mut self, time: f64) {
         self.backdrop(time);
-        centered("OPTIONS", LW / 2.0, 70.0, 44.0, title_green());
+        heading("OPTIONS", LW / 2.0, 72.0, 46.0);
         let items: Vec<String> = vec![
             format!("Speed:  < {} >", SPEEDS[self.config.speed].0),
             format!("Volume:  < {} >", self.config.volume),
@@ -365,14 +329,6 @@ impl App {
                 "Fullscreen:  < {} >",
                 if self.config.fullscreen { "On" } else { "Off" }
             ),
-            format!(
-                "Look:  < {} >",
-                if self.config.classic {
-                    "Classic"
-                } else {
-                    "Modern"
-                }
-            ),
             "Back".to_string(),
         ];
         let left = is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A);
@@ -384,7 +340,7 @@ impl App {
         } else {
             0
         };
-        let activated = self.menu(&items, LW / 2.0, 140.0, 44.0, 22.0);
+        let activated = self.menu(&items, LW / 2.0, 140.0, 50.0, 18.0);
         let step = if activated.is_some() && step == 0 {
             1
         } else {
@@ -413,11 +369,6 @@ impl App {
                     set_fullscreen(self.config.fullscreen);
                     changed = true;
                 }
-                4 => {
-                    self.config.classic = !self.config.classic;
-                    set_classic(self.config.classic);
-                    changed = true;
-                }
                 _ => {
                     if activated.is_some() {
                         self.screen = Screen::Title;
@@ -444,7 +395,7 @@ impl App {
 
     fn level_select(&mut self, time: f64) {
         self.backdrop(time);
-        centered("LEVEL SELECT", LW / 2.0, 56.0, 40.0, title_green());
+        heading("LEVEL SELECT", LW / 2.0, 58.0, 42.0);
         // A grid of level numbers.
         let cols = 6;
         let pointer = self.pointer();
@@ -474,30 +425,7 @@ impl App {
                 self.menu = i;
                 chosen = Some(i);
             }
-            let pal = palette(i);
-            let selected = self.menu == i;
-            draw_rectangle(
-                x,
-                y,
-                76.0,
-                52.0,
-                if selected {
-                    pal.wall_mid
-                } else {
-                    pal.wall_dark
-                },
-            );
-            if selected {
-                draw_rectangle_lines(x - 2.0, y - 2.0, 80.0, 56.0, 3.0, WHITE);
-            }
-            centered(&format!("{}", i + 1), x + 38.0, y + 26.0, 26.0, WHITE);
-            centered(
-                &levels::level_name(i),
-                x + 38.0,
-                y + 45.0,
-                12.0,
-                pal.wall_light,
-            );
+            level_card(i, x, y, 76.0, 52.0, self.menu == i, time);
         }
         if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Space) {
             chosen = Some(self.menu);
@@ -522,10 +450,10 @@ impl App {
 
     fn scores_screen(&mut self, time: f64) {
         self.backdrop(time);
-        centered("HIGH SCORES", LW / 2.0, 62.0, 44.0, title_green());
+        heading("HIGH SCORES", LW / 2.0, 64.0, 46.0);
         if self.scores.entries.is_empty() {
             centered(
-                "No scores yet. Go get stoned, dude!",
+                "No scores yet. Go roll one, dude!",
                 LW / 2.0,
                 200.0,
                 22.0,
@@ -536,19 +464,40 @@ impl App {
             let y = 110.0 + i as f32 * 30.0;
             let hot = self.new_rank == Some(i);
             let color = if hot {
-                accent_for(0)
+                accent()
             } else if i == 0 {
                 bright()
             } else {
                 dim()
             };
             if hot {
-                draw_rectangle(150.0, y - 22.0, 340.0, 28.0, Color::new(0.2, 0.4, 0.2, 0.5));
+                rounded_rect(
+                    146.0,
+                    y - 22.0,
+                    360.0,
+                    28.0,
+                    14.0,
+                    Color::new(0.0, 0.0, 0.0, 0.35),
+                );
             }
-            draw_text(format!("{:>2}.", i + 1), 160.0, y, 24.0, color);
-            draw_text(&e.name, 210.0, y, 24.0, color);
-            draw_text(format!("{}", e.score), 320.0, y, 24.0, color);
-            draw_text(format!("lvl {}", e.level + 1), 430.0, y, 20.0, color);
+            text(Face::Display, &format!("{}.", i + 1), 160.0, y, 20.0, color);
+            text(Face::Display, &e.name, 210.0, y, 20.0, color);
+            text(
+                Face::Display,
+                &format!("{}", e.score),
+                320.0,
+                y,
+                20.0,
+                color,
+            );
+            text(
+                Face::Body,
+                &format!("level {}", e.level + 1),
+                430.0,
+                y,
+                16.0,
+                color,
+            );
         }
         if let Some(dir) = storage::data_dir() {
             centered(
@@ -578,19 +527,19 @@ impl App {
 
     fn help(&mut self, time: f64) {
         self.backdrop(time);
-        centered("HOW TO PLAY", LW / 2.0, 52.0, 40.0, title_green());
+        heading("HOW TO PLAY", LW / 2.0, 54.0, 42.0);
         let lines = [
-            "Gather every bud in the maze, then slip out the exit.",
-            "Cops patrol the maze and they never stop hunting. Touch one and you lose a life.",
-            "Joints (pick them up!) cloud nearby cops in smoke and leave them dazed.",
-            "Press Space to set one off. Touch a dazed cop to send him back to the donut shop:",
-            "100 points, then 200, 400, 800 for each one busted by the same joint.",
-            "Buds are 10 points, joints 50. Finish under the par time for a bonus.",
-            "An extra life every 5000 points. The cops speed up when few buds remain.",
+            "Grab every leaf in the maze, then get out through the exit up top.",
+            "The cops never stop hunting you. If one grabs you, you lose a life.",
+            "Every level has its own stash: joints, red bongs, gold pipes, acid, shrooms...",
+            "Pick it up, then press Space near the cops to smoke them out for a while.",
+            "Bump a dazed cop to send them back to the donut shop: 100, 200, 400, 800.",
+            "Leaves are 10 points, stash 50. Beat the par time for a bonus.",
+            "An extra life every 5000 points. The cops hurry up when few leaves remain.",
             "",
-            "Move: arrow keys or WASD      Joint: Space or Z      Pause: P",
+            "Move: arrow keys or WASD      Light up: Space or Z      Pause: P",
             "Esc: pause menu      F11: fullscreen      0-7: volume      M: mute",
-            "On a touch screen: swipe to move, tap with two fingers for a joint.",
+            "On a touch screen: swipe to move, tap with two fingers to light up.",
         ];
         for (i, l) in lines.iter().enumerate() {
             centered(
@@ -598,7 +547,7 @@ impl App {
                 LW / 2.0,
                 100.0 + i as f32 * 28.0,
                 17.0,
-                if i >= 8 { accent_for(0) } else { bright() },
+                if i >= 8 { accent() } else { bright() },
             );
         }
         centered(
@@ -620,7 +569,7 @@ impl App {
 
     fn enter_name(&mut self, time: f64) {
         self.backdrop(time);
-        centered("NEW HIGH SCORE!", LW / 2.0, 100.0, 48.0, accent_for(0));
+        heading("NEW HIGH SCORE!", LW / 2.0, 100.0, 48.0);
         centered(
             &format!(
                 "{} points on level {}",
@@ -658,7 +607,15 @@ impl App {
                 " "
             }
         );
-        centered(&shown, LW / 2.0, 290.0, 80.0, title_green());
+        text_outlined(
+            Face::Display,
+            &shown,
+            LW / 2.0,
+            290.0,
+            72.0,
+            leaf_green(),
+            art::INK,
+        );
         if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) {
             self.new_rank = self
                 .scores
@@ -700,12 +657,15 @@ impl App {
                 Event::NothingToStun => {
                     self.sounds.play(Sfx::NoTarget);
                     play.fx
-                        .floater(pos - vec2(0.0, 18.0), "no one nearby".into(), dim());
+                        .floater(pos - vec2(0.0, 18.0), "no cops nearby".into(), dim());
                 }
                 Event::CopBusted(points) => {
                     self.sounds.play(Sfx::Bust);
-                    play.fx
-                        .floater(pos - vec2(0.0, 12.0), format!("BUSTED +{points}"), bright());
+                    play.fx.floater(
+                        pos - vec2(0.0, 12.0),
+                        format!("DONUT BREAK +{points}"),
+                        bright(),
+                    );
                     play.fx.burst(pos, WHITE, 14, 90.0);
                 }
                 Event::CopReleased => self.sounds.play(Sfx::Release),
@@ -718,7 +678,7 @@ impl App {
                     self.sounds.play(Sfx::GateOpen);
                     play.fx.floater(
                         vec2(LW / 2.0, FIELD_H / 2.0),
-                        "THE GATE IS OPEN!".into(),
+                        "THE EXIT IS OPEN!".into(),
                         c_green(),
                     );
                 }
@@ -744,12 +704,13 @@ impl App {
     fn play_screen(&mut self, dt: f32, time: f64) {
         // In demo mode any key (or click) ends the demo.
         if self.play.as_ref().is_some_and(|p| p.bot.is_some())
-            && (get_last_key_pressed().is_some() || self.clicked()) {
-                self.play = None;
-                self.screen = Screen::Title;
-                self.menu = 0;
-                return;
-            }
+            && (get_last_key_pressed().is_some() || self.clicked())
+        {
+            self.play = None;
+            self.screen = Screen::Title;
+            self.menu = 0;
+            return;
+        }
         // Global keys while playing.
         if is_key_pressed(KeyCode::P) || is_key_pressed(KeyCode::Escape) {
             self.screen = Screen::Paused;
@@ -822,6 +783,12 @@ impl App {
         // Game over.
         if play.world.phase == Phase::GameOver {
             play.game_over_timer += dt;
+            if play.bot.is_some() && play.game_over_timer > 3.0 {
+                self.play = None;
+                self.screen = Screen::Title;
+                self.menu = 0;
+                return;
+            }
             if play.game_over_timer > 1.0
                 && (is_key_pressed(KeyCode::Enter)
                     || is_key_pressed(KeyCode::Space)
@@ -878,9 +845,9 @@ impl App {
             draw_playfield(&play.world, time, &pal, &play.fx);
             draw_hud(&play.world, time, &pal);
         }
-        draw_rectangle(0.0, 0.0, LW, LH, Color::new(0.0, 0.0, 0.0, 0.6));
+        draw_rectangle(0.0, 0.0, LW, LH, Color::new(0.0, 0.0, 0.0, 0.55));
         panel(LW / 2.0 - 170.0, 96.0, 340.0, 250.0);
-        centered("PAUSED", LW / 2.0, 150.0, 42.0, title_green());
+        heading("PAUSED", LW / 2.0, 152.0, 44.0);
         let items: Vec<String> = ["Resume", "Restart level", "Quit to title"]
             .iter()
             .map(|s| s.to_string())
@@ -889,7 +856,7 @@ impl App {
             self.screen = Screen::Play;
             return;
         }
-        if let Some(i) = self.menu(&items, LW / 2.0, 214.0, 44.0, 24.0) {
+        if let Some(i) = self.menu(&items, LW / 2.0, 216.0, 46.0, 19.0) {
             match i {
                 0 => self.screen = Screen::Play,
                 1 => {
@@ -931,6 +898,7 @@ impl App {
         let vis_w = sw / self.scale;
         let vis_h = sh / self.scale;
         self.origin = vec2(-(vis_w - LW) / 2.0, -(vis_h - LH) / 2.0);
+        set_view_scale(self.scale);
     }
 }
 
@@ -942,7 +910,7 @@ fn c_green() -> Color {
 async fn main() {
     let config = storage::load_config();
     set_fullscreen(config.fullscreen);
-    set_classic(config.classic);
+    load_fonts();
     let sounds = Sounds::load(config.volume).await;
     let mut app = App {
         screen: Screen::Title,
@@ -997,30 +965,62 @@ async fn main() {
     }
     if args.iter().any(|a| a == "--demo") {
         app.start_demo(level_arg("--demo").unwrap_or(0));
+        // `--warp-to-joint` (testing): fast-forward the demo to just after it lights up.
+        if args.iter().any(|a| a == "--warp-to-joint") {
+            if let Some(Play {
+                world,
+                bot: Some(bot),
+                ..
+            }) = &mut app.play
+            {
+                let mut after = None;
+                for _ in 0..TICKS_PER_SEC * 180 {
+                    let near = world.cops.iter().any(|w| {
+                        let (wx, wy) = w.mover.pos_f();
+                        let (px, py) = world.player.pos_f();
+                        ((wx - px).powi(2) + (wy - py).powi(2)).sqrt() < 2.2
+                    });
+                    let action = after.is_none() && near && world.t % 7 == 0;
+                    world.tick(Input {
+                        dir: bot.decide(world),
+                        action,
+                    });
+                    if after.is_none() && world.events.iter().any(|e| matches!(e, Event::JointUsed))
+                    {
+                        after = Some(0);
+                    }
+                    if let Some(n) = &mut after {
+                        *n += 1;
+                        if *n > 14 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     } else if let Some(n) = level_arg("--level") {
         app.start_game(n);
     }
 
     let debug_keys = std::env::var_os("GIDDY_DEBUG_KEYS").is_some();
+    // `--shot FILE SECONDS` saves a screenshot after SECONDS and quits (for docs and testing).
+    let shot = args.iter().position(|a| a == "--shot").and_then(|i| {
+        let file = args.get(i + 1)?.clone();
+        let secs = args
+            .get(i + 2)
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(3.0);
+        Some((file, secs))
+    });
 
     loop {
         let dt = get_frame_time().min(0.1);
         let time = get_time();
         app.update_view();
-        clear_background(Color::from_rgba(6, 10, 8, 255));
+        clear_background(Color::from_rgba(4, 4, 12, 255));
         set_camera(&app.camera());
         // The logical screen area gets a slightly lighter backing so letterbox bars are visible.
-        draw_rectangle(
-            0.0,
-            0.0,
-            LW,
-            LH,
-            if classic() {
-                BLACK
-            } else {
-                Color::from_rgba(12, 20, 15, 255)
-            },
-        );
+        draw_rectangle(0.0, 0.0, LW, LH, Color::from_rgba(12, 14, 30, 255));
 
         if debug_keys {
             if let Some(k) = get_last_key_pressed() {
@@ -1073,6 +1073,12 @@ async fn main() {
         }
 
         set_default_camera();
+        if let Some((file, secs)) = &shot {
+            if time >= *secs {
+                get_screen_data().export_png(file);
+                break;
+            }
+        }
         if app.quit && !IS_WEB {
             break;
         }

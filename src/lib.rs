@@ -12,3 +12,4 @@ pub mod levels;
 pub mod maze;
 pub mod rng;
 pub mod storage;
+pub mod themes;

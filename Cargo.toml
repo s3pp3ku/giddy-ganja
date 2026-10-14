@@ -1,6 +1,6 @@
 [package]
 name = "giddy-ganja"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 description = "A fast, tile-based maze-chase game: gather every leaf, dodge the cops, reach the gate."
@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 macroquad = { version = "0.4", default-features = false, features = ["audio"] }
+fontdue = "0.9"
 
 [profile.release]
 opt-level = 3
